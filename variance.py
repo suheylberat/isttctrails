@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+
 """
 Estimator x Model x Scale disentangling analysis (revised)
 ==========================================================
