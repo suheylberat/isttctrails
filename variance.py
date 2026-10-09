@@ -116,7 +116,12 @@ def _binned_acf_nb(counts, nlags):
 
     return ac
 
-
+"""
+4. The binned ACF is still computed with 5 ms bins, but it is read out at the iSTTC lag points (10 ms spacing, up to 6 s).
+Both estimators now see an identical lag vector.
+If the recording can't support the full window, the neuron is dropped instead of shortening the window. 
+The same applies if iSTTC returns fewer than 600 lags.
+"""
 def calculate_binned_acf_on_grid(spike_times, total_duration, target_lags_s,
                                  bin_size=ACF_BIN_S):
     """
@@ -149,7 +154,12 @@ def calculate_binned_acf_on_grid(spike_times, total_duration, target_lags_s,
 
 _UNIT_CHECK_DONE = False
 
-
+"""1. this part is for your first feedback: - It looks like the isttc pipeline (at least your version on zenodo) outputs in milliseconds, but then you multiply by 1000.0 in your notebook anyway. 
+It would be more clear to call the output of isttc tau_effective_ms so units are explicit 
+iSTTC lags are converted to seconds immediately.
+Both estimators go through the same _fit_to_tau_ms, so the * 1000 happens in one place with a known unit.
+The detected unit is printed once ([units] ...)
+"""
 def _lags_to_seconds(lags):
     """isttc_pipeline may return ms; force seconds. Expected max ~ 6 s (6000 ms)."""
     global _UNIT_CHECK_DONE
@@ -213,7 +223,9 @@ def get_beryl_regions_for_clusters(clusters, channels):
     beryl_acronyms_per_channel = br.id2acronym(chan_ids, mapping="Beryl")
     return beryl_acronyms_per_channel[clu_channels]
 
-
+"""
+3. The label distribution and the number of good neurons are printed per probe.
+"""
 def _get_qc_labels(clusters, n_clusters):
     """IBL QC labels. No silent fallback: raise if they cannot be found."""
     labels = None
@@ -248,9 +260,14 @@ def run_dual_estimation(one, pids, verbose=True, n_jobs=-1, apply_ibl_qc=True,
         t_start, t_end, epoch_source = get_spontaneous_window(one, eid, verbose=verbose)
         if t_start is None:
             print(f"  SKIP: no spontaneous/passive epoch for {eid}.")
-            continue
+            continue  
+        """2. this part is new and your review was: I’m concerned about get_spontaneous_window; 
+        it actually seems to try to load task-related activity, and only the passive period if that fails 
+        epoch_source is also saved as a column for every neuron.
+        Windows shorter than 12 s (twice the 6 s fit window) are skipped.
+        """
         if REQUIRE_PASSIVE and "passive" not in str(epoch_source).lower():
-            print(f"  SKIP: epoch source is '{epoch_source}', not passive ({eid}).")
+            print(f"SKIP: epoch source is '{epoch_source}', not passive ({eid}).")
             continue
         recording_duration = t_end - t_start
         if recording_duration < N_LAGS * LAG_STEP_S * 2:
@@ -350,6 +367,10 @@ def run_dual_estimation(one, pids, verbose=True, n_jobs=-1, apply_ibl_qc=True,
 
 TAU_COLS = {"binned_ACF": "tau_binned_ms", "iSTTC": "tau_isttc_ms"}
 
+"""
+6. The common set is built once, with region counts computed on that set.
+All 8 cells use the same d, and this is enforced:
+"""
 
 def build_common_set(df, region_col="region", subject_col="subject",
                      session_col="session_id", pid_col="pid",
@@ -443,6 +464,13 @@ def hierarchical_variance_share(d, tau_col, scale, region_col="region",
         var[f] = post[_find_sd_var(post, f)].values.reshape(-1) ** 2
     var["residual"] = post["sigma"].values.reshape(-1) ** 2
 
+
+"""
+7. The proportion is computed per posterior draw first, then averaged over draws, as Jason suggested. Previously it was a ratio of means.
+SD variables are looked up by their Bambi names (1|region_sigma etc.) instead of the "sigma" in name search.
+The old region_key = [k for k in hshare if region_col in k] could match the n_regions key, so it was removed.
+A 94% interval for the region share is now reported too.
+"""
     names = list(var)
     mat = np.stack([var[k] for k in names])            # (components, draws)
     share_draws = mat / mat.sum(axis=0, keepdims=True)  # per-draw proportions
@@ -464,6 +492,11 @@ def build_8cell_table(d, region_col="region", subject_col="subject",
     n_ref = len(d)
     k_ref = d[region_col].nunique()
 
+    """
+The log_transform=True/False flag is replaced by scale="raw"/"log".
+The result is 2 x 2 x 2 = 8 cells, saved to eight_cell_table.csv.
+build_scale_crossed_diagnostic is removed because it is now redundant.
+    """
     for estimator, tau_col in TAU_COLS.items():
         for scale in ["raw", "log"]:
             # --- ordinary R^2 ---
